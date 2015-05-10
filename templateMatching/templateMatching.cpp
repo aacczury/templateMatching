@@ -2,7 +2,6 @@
 #include "opencv2/imgproc/imgproc.hpp"
 #include <iostream>
 #include <stdio.h>
-#include <omp.h>
 
 using namespace std;
 using namespace cv;
@@ -36,13 +35,12 @@ void testTM(){
 	int i, j, x, y;
 	for (j = 0; j < result_rows; ++j){
 		for (i = 0; i < result_cols; ++i){
-			Mat I(rgbImg, Rect(i, j, rgbTempl.cols, rgbTempl.rows));
-			Mat _I = I - Mat(rgbTempl.rows, rgbTempl.cols, CV_32FC3, mean(I));
-			((float *)result.data)[j * result_cols + i] = (float)norm(sum(_I.mul(_T)));
-			//((float *)result.data)[j * result_cols + i] = norm(sum(_I.mul(_T)));
-			//result.at<Vec4f>(j, i) = sum(_I.mul(_T)); (slower than access address)
+			Mat tmpI(rgbImg, Rect(i, j, rgbTempl.cols, rgbTempl.rows));
+			Mat I;
+			tmpI.copyTo(I, splitTempl[3]);
+			tmpI.release();
+			((float *)result.data)[j * result_cols + i] = (float)norm(sum((I - rgbTempl).mul(I - rgbTempl)));
 			I.release();
-			_I.release();
 		}
 		printf("%d\n", j);
 	}
@@ -52,7 +50,8 @@ void testTM(){
 	double minVal, maxVal;
 	Point minLoc, maxLoc;
 	minMaxLoc(result, &minVal, &maxVal, &minLoc, &maxLoc);
-	resizeTempl.copyTo(img_display(Rect(maxLoc.x, maxLoc.y, resizeTempl.cols, resizeTempl.rows)));
+	resizeTempl.copyTo(img_display(Rect(minLoc.x, minLoc.y, resizeTempl.cols, resizeTempl.rows)));
+	//rectangle(img_display, minLoc, Point(minLoc.x + resizeTempl.cols, minLoc.y + resizeTempl.rows), Scalar::all(0), 2, 8, 0);
 
 	imshow(image_window, result);
 	imshow(result_window, img_display);
@@ -80,10 +79,12 @@ int main(int argc, char** argv)
 	split(resizeTempl, splitTempl);
 	merge(splitTempl, 3, rgbTempl);
 
+	splitTempl[3].convertTo(splitTempl[3], CV_8U, 255.0); // alpha channel is mask would be CV_8U
+
 	/// Create windows
 	namedWindow(image_window, CV_WINDOW_AUTOSIZE);
 	namedWindow(result_window, CV_WINDOW_AUTOSIZE);
-
+		
 	testTM();
 
 	/// Create Trackbar
