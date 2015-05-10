@@ -50,7 +50,7 @@ void testTM(){
 	double minVal, maxVal;
 	Point minLoc, maxLoc;
 	minMaxLoc(result, &minVal, &maxVal, &minLoc, &maxLoc);
-	resizeTempl.copyTo(img_display(Rect(minLoc.x, minLoc.y, resizeTempl.cols, resizeTempl.rows)));
+	resizeTempl.copyTo(img_display(Rect(minLoc.x, minLoc.y, resizeTempl.cols, resizeTempl.rows)), splitTempl[3]);
 	//rectangle(img_display, minLoc, Point(minLoc.x + resizeTempl.cols, minLoc.y + resizeTempl.rows), Scalar::all(0), 2, 8, 0);
 
 	imshow(image_window, result);
