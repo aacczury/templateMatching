@@ -6,6 +6,32 @@
 using namespace std;
 using namespace cv;
 
+class Parallel_process : public ParallelLoopBody{
+private:
+	Mat input;
+	Mat &output;
+	Mat templ;
+	Mat m;
+
+public:
+	Parallel_process(Mat inputImg, Mat &outputImg, Mat templImg, Mat Mask)
+		:input(inputImg), output(outputImg), templ(templImg), m(Mask){}
+
+	virtual void operator()(const Range &range) const{
+		for (int j = range.start; j < range.end; ++j){
+			for (int i = 0; i < output.cols; ++i){
+				Mat tmpI(input, Rect(i, j, templ.cols, templ.rows));
+				Mat I;
+				tmpI.copyTo(I, m);
+				tmpI.release();
+				((float *)output.data)[j * output.cols + i] = (float)norm(sum((I - templ).mul(I - templ)));
+				I.release();
+			}
+			printf("%d\n", j);
+		}
+	}
+};
+
 /// Global Variables
 Mat img; Mat templ; Mat result;
 Mat resizeImg, resizeTempl; // resize + rgba
@@ -31,19 +57,7 @@ void testTM(){
 
 	result.create(result_rows, result_cols, CV_32FC1);
 
-	Mat _T = rgbTempl - Mat(rgbTempl.rows, rgbTempl.cols, CV_32FC3, mean(rgbTempl));
-	int i, j, x, y;
-	for (j = 0; j < result_rows; ++j){
-		for (i = 0; i < result_cols; ++i){
-			Mat tmpI(rgbImg, Rect(i, j, rgbTempl.cols, rgbTempl.rows));
-			Mat I;
-			tmpI.copyTo(I, splitTempl[3]);
-			tmpI.release();
-			((float *)result.data)[j * result_cols + i] = (float)norm(sum((I - rgbTempl).mul(I - rgbTempl)));
-			I.release();
-		}
-		printf("%d\n", j);
-	}
+	parallel_for_(Range(0, result.rows), Parallel_process(rgbImg, result, rgbTempl, splitTempl[3]));
 	cout << "finish" << endl;
 	normalize(result, result, 0, 1, NORM_MINMAX, -1, Mat());
 	
@@ -51,7 +65,6 @@ void testTM(){
 	Point minLoc, maxLoc;
 	minMaxLoc(result, &minVal, &maxVal, &minLoc, &maxLoc);
 	resizeTempl.copyTo(img_display(Rect(minLoc.x, minLoc.y, resizeTempl.cols, resizeTempl.rows)), splitTempl[3]);
-	//rectangle(img_display, minLoc, Point(minLoc.x + resizeTempl.cols, minLoc.y + resizeTempl.rows), Scalar::all(0), 2, 8, 0);
 
 	imshow(image_window, result);
 	imshow(result_window, img_display);
@@ -87,59 +100,6 @@ int main(int argc, char** argv)
 		
 	testTM();
 
-	/// Create Trackbar
-	//char* trackbar_label = "Method: \n 0: SQDIFF \n 1: SQDIFF NORMED \n 2: TM CCORR \n 3: TM CCORR NORMED \n 4: TM COEFF \n 5: TM COEFF NORMED";
-	//createTrackbar(trackbar_label, image_window, &match_method, max_Trackbar, MatchingMethod);
-
-	//MatchingMethod(0, 0);
-
 	waitKey(0);
 	return 0;
-}
-
-/**
-* @function MatchingMethod
-* @brief Trackbar callback
-*/
-void MatchingMethod(int, void*)
-{
-	/// Source image to display
-	Mat img_display;
-	resizeImg.copyTo(img_display);
-
-	/// Create the result matrix
-	int result_cols = resizeImg.cols - resizeTempl.cols + 1;
-	int result_rows = resizeImg.rows - resizeTempl.rows + 1;
-
-	result.create(result_rows, result_cols, CV_32FC1);
-
-	/// Do the Matching and Normalize
-	matchTemplate(resizeImg, resizeTempl, result, match_method);
-	normalize(result, result, 0, 1, NORM_MINMAX, -1, Mat());
-
-	/// Localizing the best match with minMaxLoc
-	double minVal; double maxVal; Point minLoc; Point maxLoc;
-	Point matchLoc;
-
-	minMaxLoc(result, &minVal, &maxVal, &minLoc, &maxLoc, Mat());
-
-	/// For SQDIFF and SQDIFF_NORMED, the best matches are lower values. For all the other methods, the higher the better
-	if (match_method == CV_TM_SQDIFF || match_method == CV_TM_SQDIFF_NORMED)
-	{
-		matchLoc = minLoc;
-	}
-	else
-	{
-		matchLoc = maxLoc;
-	}
-
-	/// Show me what you got
-	rectangle(img_display, matchLoc, Point(matchLoc.x + resizeTempl.cols, matchLoc.y + resizeTempl.rows), Scalar::all(0), 2, 8, 0);
-	rectangle(result, matchLoc, Point(matchLoc.x + resizeTempl.cols, matchLoc.y + resizeTempl.rows), Scalar::all(0), 2, 8, 0);
-
-	imshow(image_window, img_display);
-	imwrite("out.png", img_display);
-	imshow(result_window, result);
-
-	return;
 }
