@@ -6,6 +6,14 @@
 using namespace std;
 using namespace cv;
 
+/// Global Variables
+Mat img; Mat templ; Mat result;
+Mat resizeImg, resizeTempl; // resize + rgba
+Mat splitImg[4], splitTempl[4]; // resize + r,g,b,a
+Mat rgbImg, rgbTempl; // resize + rgb
+char* image_window = "Source Image";
+char* result_window = "Result window";
+
 class Parallel_process : public ParallelLoopBody{
 private:
 	Mat input;
@@ -31,20 +39,6 @@ public:
 		}
 	}
 };
-
-/// Global Variables
-Mat img; Mat templ; Mat result;
-Mat resizeImg, resizeTempl; // resize + rgba
-Mat splitImg[4], splitTempl[4]; // resize + r,g,b,a
-Mat rgbImg, rgbTempl; // resize + rgb
-char* image_window = "Source Image";
-char* result_window = "Result window";
-
-int match_method;
-int max_Trackbar = 5;
-
-/// Function Headers
-void MatchingMethod(int, void*);
 
 void testTM(){
 	/// Source image to display
