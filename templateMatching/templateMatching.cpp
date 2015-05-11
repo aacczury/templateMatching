@@ -7,12 +7,14 @@ using namespace std;
 using namespace cv;
 
 /// Global Variables
-Mat img; Mat templ; Mat result;
+Mat img, templ, result;
+Mat oSplitTempl[4];
 Mat resizeImg, resizeTempl; // resize + rgba
 Mat splitImg[4], splitTempl[4]; // resize + r,g,b,a
 Mat rgbImg, rgbTempl; // resize + rgb
 char* image_window = "Source Image";
 char* result_window = "Result window";
+double scale = 0.2;
 
 class Parallel_process : public ParallelLoopBody{
 private:
@@ -43,7 +45,7 @@ public:
 void testTM(){
 	/// Source image to display
 	Mat img_display;
-	resizeImg.copyTo(img_display);
+	img.copyTo(img_display);
 
 	/// Create the result matrix
 	int result_cols = resizeImg.cols - resizeTempl.cols + 1;
@@ -58,11 +60,10 @@ void testTM(){
 	double minVal, maxVal;
 	Point minLoc, maxLoc;
 	minMaxLoc(result, &minVal, &maxVal, &minLoc, &maxLoc);
-	resizeTempl.copyTo(img_display(Rect(minLoc.x, minLoc.y, resizeTempl.cols, resizeTempl.rows)), splitTempl[3]);
+	templ.copyTo(img_display(Rect(minLoc.x / scale, minLoc.y / scale, templ.cols, templ.rows)), oSplitTempl[3]);
 
 	imshow(image_window, result);
 	imshow(result_window, img_display);
-	img_display.convertTo(img_display, CV_8UC4, 255.0);
 	imwrite("out.png", img_display);
 	return;
 }
@@ -71,22 +72,22 @@ void testTM(){
 /** @function main */
 int main(int argc, char** argv)
 {
-	double scale = 0.2;
 	/// Load image and template (contain alpha channel)
 	img = imread("input.png", CV_LOAD_IMAGE_UNCHANGED);
 	templ = imread("match.png", CV_LOAD_IMAGE_UNCHANGED);
-	img.convertTo(img, CV_32FC4, 1.0 / 255.0);
-	templ.convertTo(templ, CV_32FC4, 1.0 / 255.0);
+	split(templ, oSplitTempl);
 
 	resize(img, resizeImg, Size(img.cols * scale, img.rows * scale));
 	resize(templ, resizeTempl, Size(templ.cols * scale, templ.rows * scale));
 
 	split(resizeImg, splitImg);
+	split(resizeTempl, splitTempl); // alpha channel is mask would be CV_8U
+
 	merge(splitImg, 3, rgbImg);
-	split(resizeTempl, splitTempl);
 	merge(splitTempl, 3, rgbTempl);
 
-	splitTempl[3].convertTo(splitTempl[3], CV_8U, 255.0); // alpha channel is mask would be CV_8U
+	rgbImg.convertTo(rgbImg, CV_32FC4, 1.0 / 255.0);
+	rgbTempl.convertTo(rgbTempl, CV_32FC4, 1.0 / 255.0);
 
 	/// Create windows
 	namedWindow(image_window, CV_WINDOW_AUTOSIZE);
