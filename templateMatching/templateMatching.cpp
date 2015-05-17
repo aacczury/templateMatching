@@ -1,20 +1,20 @@
-#include "opencv2/highgui/highgui.hpp"
-#include "opencv2/imgproc/imgproc.hpp"
+#include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
 #include <iostream>
 #include <stdio.h>
 
 using namespace std;
 using namespace cv;
 
-/// Global Variables
-Mat img, templ, result;
-Mat oSplitTempl[4];
-Mat resizeImg, resizeTempl; // resize + rgba
-Mat splitImg[4], splitTempl[4]; // resize + r,g,b,a
-Mat rgbImg, rgbTempl; // resize + rgb
-char* image_window = "Source Image";
-char* result_window = "Result window";
-double scale = 0.2;
+using namespace System;
+using namespace System::IO;
+
+typedef struct tmpMatchDiff{
+	char *filename;
+	Vec2i pos;
+	float diff;
+}matchDiff;
 
 class Parallel_process : public ParallelLoopBody{
 private:
@@ -37,64 +37,80 @@ public:
 				((float *)output.data)[j * output.cols + i] = (float)norm(sum((I - templ).mul(I - templ)));
 				I.release();
 			}
-			printf("%d\n", j);
+			//printf("%d\n", j);
 		}
 	}
 };
 
-void testTM(){
-	/// Source image to display
-	Mat img_display;
-	img.copyTo(img_display);
-
+void templateMatching(Mat inputImg, Mat &resultImg, Mat templImg, Mat Mask){
 	/// Create the result matrix
-	int result_cols = resizeImg.cols - resizeTempl.cols + 1;
-	int result_rows = resizeImg.rows - resizeTempl.rows + 1;
+	int result_cols = inputImg.cols - templImg.cols + 1;
+	int result_rows = inputImg.rows - templImg.rows + 1;
 
-	result.create(result_rows, result_cols, CV_32FC1);
+	resultImg.create(result_rows, result_cols, CV_32FC1);
 
-	parallel_for_(Range(0, result.rows), Parallel_process(rgbImg, result, rgbTempl, splitTempl[3]));
-	cout << "finish" << endl;
-	normalize(result, result, 0, 1, NORM_MINMAX, -1, Mat());
+	parallel_for_(Range(0, resultImg.rows), Parallel_process(inputImg, resultImg, templImg, Mask));
+	//cout << "finish" << endl;
+	normalize(resultImg, resultImg, 0, 1, NORM_MINMAX, -1, Mat());
+	resultImg.convertTo(resultImg, CV_8UC1, 255.0);
 	
-	double minVal, maxVal;
-	Point minLoc, maxLoc;
-	minMaxLoc(result, &minVal, &maxVal, &minLoc, &maxLoc);
-	templ.copyTo(img_display(Rect(minLoc.x / scale, minLoc.y / scale, templ.cols, templ.rows)), oSplitTempl[3]);
-
-	imshow(image_window, result);
-	imshow(result_window, img_display);
-	imwrite("out.png", img_display);
 	return;
 }
-
 
 /** @function main */
 int main(int argc, char** argv)
 {
-	/// Load image and template (contain alpha channel)
+	Mat img, templ;
+	Mat oSplitTempl[4]; // r,g,b,a
+	Mat resizeImg, resizeTempl; // resize + rgba
+	Mat splitImg[4], splitTempl[4]; // resize + r,g,b,a
+	Mat rgbImg, rgbTempl; // resize + rgb
+	double scale = 0.2;
+	char *inputDir = "match", *outputDir = "result";
+
 	img = imread("input.png", CV_LOAD_IMAGE_UNCHANGED);
-	templ = imread("match.png", CV_LOAD_IMAGE_UNCHANGED);
-	split(templ, oSplitTempl);
-
 	resize(img, resizeImg, Size(img.cols * scale, img.rows * scale));
-	resize(templ, resizeTempl, Size(templ.cols * scale, templ.rows * scale));
-
 	split(resizeImg, splitImg);
-	split(resizeTempl, splitTempl); // alpha channel is mask would be CV_8U
-
 	merge(splitImg, 3, rgbImg);
-	merge(splitTempl, 3, rgbTempl);
-
 	rgbImg.convertTo(rgbImg, CV_32FC4, 1.0 / 255.0);
-	rgbTempl.convertTo(rgbTempl, CV_32FC4, 1.0 / 255.0);
 
-	/// Create windows
-	namedWindow(image_window, CV_WINDOW_AUTOSIZE);
-	namedWindow(result_window, CV_WINDOW_AUTOSIZE);
+	System::String^ folder = gcnew System::String(inputDir);
+	array<System::String ^>^ file = Directory::GetFiles(folder);
+	vector<matchDiff> allDiff; allDiff.clear();
+	for (int i = 0; i < file->Length; ++i){
+		char *fileWithDir = (char*)System::Runtime::InteropServices::Marshal::StringToHGlobalAnsi(file[i]).ToPointer();
+		char *fileName = (char*)System::Runtime::InteropServices::Marshal::StringToHGlobalAnsi(file[i]->Split('\\')[1]).ToPointer();
 		
-	testTM();
+		printf("%s\n", fileName);
+		
+		templ = imread(fileWithDir, CV_LOAD_IMAGE_UNCHANGED);
+		split(templ, oSplitTempl);
+		resize(templ, resizeTempl, Size(templ.cols * scale, templ.rows * scale));
+		split(resizeTempl, splitTempl); // alpha channel is mask would be CV_8U
+		merge(splitTempl, 3, rgbTempl);
+		rgbTempl.convertTo(rgbTempl, CV_32FC4, 1.0 / 255.0);
 
+		Mat resultImg;
+		templateMatching(rgbImg, resultImg, rgbTempl, splitTempl[3]);
+
+		/// Source image to display
+		Mat outputImg;
+		img.copyTo(outputImg);
+
+		double minVal, maxVal;
+		Point minLoc, maxLoc;
+		minMaxLoc(resultImg, &minVal, &maxVal, &minLoc, &maxLoc);
+		templ.copyTo(outputImg(Rect(minLoc.x / scale, minLoc.y / scale, templ.cols, templ.rows)), oSplitTempl[3]);
+
+		char resultFile[50], outputFile[50];
+		sprintf(resultFile, "%s/result_%s", outputDir, fileName);
+		sprintf(outputFile, "%s/output_%s", outputDir, fileName);
+		imwrite(resultFile, resultImg);
+		imwrite(outputFile, outputImg);
+	}
+
+	Mat test;
+	imshow("test", test);
 	waitKey(0);
 	return 0;
 }
