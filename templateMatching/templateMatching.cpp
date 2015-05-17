@@ -15,6 +15,9 @@ typedef struct tmpMatchDiff{
 	Vec2i pos;
 	float diff;
 }matchDiff;
+bool compareByDiff(const matchDiff &a, const matchDiff &b){
+	return a.diff < b.diff;
+}
 
 class Parallel_process : public ParallelLoopBody{
 private:
@@ -30,10 +33,8 @@ public:
 	virtual void operator()(const Range &range) const{
 		for (int j = range.start; j < range.end; ++j){
 			for (int i = 0; i < output.cols; ++i){
-				Mat tmpI(input, Rect(i, j, templ.cols, templ.rows));
-				Mat I;
-				tmpI.copyTo(I, m);
-				tmpI.release();
+				Mat tmpI(input, Rect(i, j, templ.cols, templ.rows)), I;
+				tmpI.copyTo(I, m); tmpI.release();
 				((float *)output.data)[j * output.cols + i] = (float)norm(sum((I - templ).mul(I - templ)));
 				I.release();
 			}
@@ -42,7 +43,7 @@ public:
 	}
 };
 
-void templateMatching(Mat inputImg, Mat &resultImg, Mat templImg, Mat Mask){
+void templateMatching(Mat inputImg, Mat &resultImg, Mat templImg, Mat Mask, vector<matchDiff> &allDiff, char *fileWithDir){
 	/// Create the result matrix
 	int result_cols = inputImg.cols - templImg.cols + 1;
 	int result_rows = inputImg.rows - templImg.rows + 1;
@@ -50,6 +51,14 @@ void templateMatching(Mat inputImg, Mat &resultImg, Mat templImg, Mat Mask){
 	resultImg.create(result_rows, result_cols, CV_32FC1);
 
 	parallel_for_(Range(0, resultImg.rows), Parallel_process(inputImg, resultImg, templImg, Mask));
+	for (int j = 0; j < resultImg.rows; ++ j)
+		for (int i = 0; i < resultImg.cols; ++i){
+			matchDiff pDiff;
+			pDiff.filename = fileWithDir;
+			pDiff.pos = Vec2i(i, j); // (col, row) (x, y)
+			pDiff.diff = ((float *)resultImg.data)[j * resultImg.cols + i];
+			allDiff.push_back(pDiff);
+		}
 	//cout << "finish" << endl;
 	normalize(resultImg, resultImg, 0, 1, NORM_MINMAX, -1, Mat());
 	resultImg.convertTo(resultImg, CV_8UC1, 255.0);
@@ -91,26 +100,44 @@ int main(int argc, char** argv)
 		rgbTempl.convertTo(rgbTempl, CV_32FC4, 1.0 / 255.0);
 
 		Mat resultImg;
-		templateMatching(rgbImg, resultImg, rgbTempl, splitTempl[3]);
+		templateMatching(rgbImg, resultImg, rgbTempl, splitTempl[3], allDiff, fileWithDir);
 
 		/// Source image to display
-		Mat outputImg;
+		/*Mat outputImg;
 		img.copyTo(outputImg);
 
 		double minVal, maxVal;
 		Point minLoc, maxLoc;
 		minMaxLoc(resultImg, &minVal, &maxVal, &minLoc, &maxLoc);
 		templ.copyTo(outputImg(Rect(minLoc.x / scale, minLoc.y / scale, templ.cols, templ.rows)), oSplitTempl[3]);
-
+		
 		char resultFile[50], outputFile[50];
 		sprintf(resultFile, "%s/result_%s", outputDir, fileName);
 		sprintf(outputFile, "%s/output_%s", outputDir, fileName);
 		imwrite(resultFile, resultImg);
-		imwrite(outputFile, outputImg);
+		imwrite(outputFile, outputImg);*/
 	}
 
-	Mat test;
-	imshow("test", test);
+	Mat outputImg;
+	img.copyTo(outputImg);
+	sort(allDiff.begin(), allDiff.end(), compareByDiff);
+	for (int i = 0; i < 100; ++i){
+		templ = imread(allDiff[i].filename, CV_LOAD_IMAGE_UNCHANGED);
+		split(templ, oSplitTempl);
+		templ.copyTo(outputImg(Rect(allDiff[i].pos[0] / scale, allDiff[i].pos[1] / scale, templ.cols, templ.rows)), oSplitTempl[3]);
+		//printf("%s\t(%d, %d): %f\n", allDiff[i].filename, allDiff[i].pos[0], allDiff[i].pos[1], allDiff[i].diff);
+	}
+
+	namedWindow("output", CV_WINDOW_AUTOSIZE);
+	imshow("output", outputImg);
+	imwrite("outputImg.png", outputImg);
+
+	FILE *pFile;
+	pFile = fopen("outAllDiff.txt", "w");
+	for (int i = 0; i < allDiff.size(); ++i)
+		fprintf(pFile, "%s,%d,%d,%f\n", allDiff[i].filename, allDiff[i].pos[0], allDiff[i].pos[1], allDiff[i].diff);
+	fclose(pFile);
+
 	waitKey(0);
 	return 0;
 }
