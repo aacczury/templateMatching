@@ -15,8 +15,8 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="templateMatching.cpp">
+    <CudaCompile Include="templateMatching.cu">
       <Filter>原始程式檔</Filter>
-    </ClCompile>
+    </CudaCompile>
   </ItemGroup>
 </Project>
