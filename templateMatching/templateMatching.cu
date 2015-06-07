@@ -4,6 +4,10 @@
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/gpu/gpu.hpp>
 
+#include <cuda.h>
+#include <device_launch_parameters.h>
+#include <cuda_runtime.h>
+
 using namespace cv;
 using namespace std;
 
@@ -13,6 +17,58 @@ typedef struct tmpMatchDiff{
 	float diff;
 }matchDiff;
 
+void VectorAdd(Mat inputImg, Mat &resultImg, Mat templImg, Mat Mask){
+	//int i = threadIdx.x;
+	int result_cols = inputImg.cols - templImg.cols + 1;
+	int result_rows = inputImg.rows - templImg.rows + 1;
+
+
+	for (int j = 0; j < result_rows; ++j){
+		for (int i = 0; i < result_cols; ++i){
+			Mat tmpI(inputImg, Rect(i, j, templImg.cols, templImg.rows)), I;
+			tmpI.copyTo(I, Mask); tmpI.release();
+			((float *)resultImg.data)[j * result_cols + i] = (float)norm(sum((I-templImg).mul(I-templImg)));
+			I.release();
+		}
+	}
+}
+
+void templateMatching(Mat inputImg, Mat &resultImg, Mat templImg, Mat Mask, vector<matchDiff> &allDiff, char *fileWithDir){
+	/// Create the result matrix
+	int result_cols = inputImg.cols - templImg.cols + 1;
+	int result_rows = inputImg.rows - templImg.rows + 1;
+
+	resultImg.create(result_rows, result_cols, CV_32FC1);
+
+	gpu::GpuMat d_inputImg(inputImg), d_templImg(templImg), d_Mask(Mask), d_resultImg(resultImg);
+	for (int j = 0; j < result_rows; ++j){
+		for (int i = 0; i < result_cols; ++i){
+			gpu::GpuMat tmpI(d_inputImg, Rect(i, j, templImg.cols, templImg.rows)), d_I;
+			tmpI.copyTo(d_I, d_Mask); tmpI.release();
+			gpu::GpuMat d_disMat;
+			gpu::subtract(d_I, d_templImg, d_disMat);
+			gpu::multiply(d_disMat, d_disMat, d_disMat);
+			(float)gpu::norm(d_disMat);
+			d_I.release();
+		}
+		//printf("%d\n", j);
+	}
+
+	for (int j = 0; j < resultImg.rows; ++j)
+		for (int i = 0; i < resultImg.cols; ++i){
+			matchDiff pDiff;
+			pDiff.filename = fileWithDir;
+			pDiff.pos = Vec2i(i, j); // (col, row) (x, y)
+			pDiff.diff = ((float *)resultImg.data)[j * resultImg.cols + i];
+			allDiff.push_back(pDiff);
+		}
+	//cout << "finish" << endl;
+	normalize(resultImg, resultImg, 0, 1, NORM_MINMAX, -1, Mat());
+	resultImg.convertTo(resultImg, CV_8UC1, 255.0);
+
+	return;
+}
+
 int main(int argc, char* argv[])
 {
 	printf("Device count: %i\n", cv::gpu::getCudaEnabledDeviceCount());
@@ -21,28 +77,47 @@ int main(int argc, char* argv[])
 
 	try
 	{
-		Mat src_host = imread("input.png", CV_LOAD_IMAGE_GRAYSCALE);
+		/*Mat src_host = imread("input.png", CV_LOAD_IMAGE_GRAYSCALE);
 		gpu::GpuMat dst, src(src_host);
 
 		gpu::threshold(src, dst, 128.0, 255.0, CV_THRESH_BINARY);
 
 		Mat result_host(dst);
-		imshow("Result", result_host);
+		imshow("Result", result_host);*/
 
 
 		Mat img, outputImg;
 		double scale = 0.2;
 		vector<matchDiff> allDiff;
-
 		img = imread("input.png", CV_LOAD_IMAGE_UNCHANGED);
 
+		Mat templ;
+		Mat resizeImg, resizeTempl; // resize + rgba
+		Mat splitImg[4], splitTempl[4]; // resize + r,g,b,a
+		Mat rgbImg, rgbTempl; // resize + rgb
+		char *inputDir = "match", *outputDir = "result";
+		allDiff.clear();
+
+		resize(img, resizeImg, Size(img.cols * scale, img.rows * scale));
+		split(resizeImg, splitImg);
+		merge(splitImg, 3, rgbImg);
+		rgbImg.convertTo(rgbImg, CV_32FC4, 1.0 / 255.0);
+		templ = imread("match.png", CV_LOAD_IMAGE_UNCHANGED);
+		resize(templ, resizeTempl, Size(templ.cols * scale, templ.rows * scale));
+		split(resizeTempl, splitTempl); // alpha channel is mask would be CV_8U
+		merge(splitTempl, 3, rgbTempl);
+		rgbTempl.convertTo(rgbTempl, CV_32FC4, 1.0 / 255.0);
+
+		Mat resultImg;
+
+		templateMatching(rgbImg, resultImg, rgbTempl, splitTempl[3], allDiff, "match.png");
 		//runTemplateMatching(img, allDiff, scale);
 		//outputDiff(allDiff);
 		//outputByTxt(img, outputImg, scale);
 
 		namedWindow("output", CV_WINDOW_AUTOSIZE);
-		imshow("output", outputImg);
-		imwrite("outputImg.png", outputImg);
+		imshow("output", resultImg);
+		imwrite("outputImg.png", resultImg);
 	}
 	catch (const cv::Exception& ex)
 	{
