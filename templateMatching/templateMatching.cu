@@ -5,7 +5,6 @@
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/gpu/gpu.hpp>
 #include <opencv2/gpu/stream_accessor.hpp>
-typedef unsigned int uint;
 #include <opencv2/gpu/device/vec_traits.hpp>
 
 #include <cuda_runtime.h>
@@ -36,7 +35,7 @@ __device__ __forceinline__ float3 sub(float3 a, float3 b) { return make_float3(a
 __device__ __forceinline__ float4 sub(float4 a, float4 b) { return make_float4(a.x - b.x, a.y - b.y, a.z - b.z, a.w - b.w); }
 
 template <typename T, int cn>
-__global__ void matchTemplateNaiveKernel_SQDIFF(int w, int h, const PtrStepb image, const PtrStepb templ, PtrStepSzf result){
+__global__ void matchTemplateNaiveKernel_SQDIFF(int w, int h, const PtrStepb image, const PtrStepb templ, PtrStepSzf result, PtrStepSzf mask){
 	typedef typename device::TypeVec<T, cn>::vec_type Type;
 	typedef typename device::TypeVec<float, cn>::vec_type Typef;
 
@@ -50,9 +49,12 @@ __global__ void matchTemplateNaiveKernel_SQDIFF(int w, int h, const PtrStepb ima
 		for (int i = 0; i < h; ++i){
 			const Type* image_ptr = (const Type*)image.ptr(y + i);
 			const Type* templ_ptr = (const Type*)templ.ptr(i);
+			float *mask_ptr = (float *)mask.ptr(i);
 			for (int j = 0; j < w; ++j){
-				delta = sub(image_ptr[x + j], templ_ptr[j]);
-				res = add(res, mul(delta, delta));
+				if (mask_ptr[j] > 0.5){
+					delta = sub(image_ptr[x + j], templ_ptr[j]);
+					res = add(res, mul(delta, delta));
+				}
 			}
 		}
 
@@ -61,30 +63,29 @@ __global__ void matchTemplateNaiveKernel_SQDIFF(int w, int h, const PtrStepb ima
 }
 
 template <typename T, int cn>
-void matchTemplateNaive_SQDIFF(const PtrStepSzb image, const PtrStepSzb templ, PtrStepSzf result, cudaStream_t stream){
+void matchTemplateNaive_SQDIFF(const PtrStepSzb image, const PtrStepSzb templ, PtrStepSzf result, PtrStepSzf mask){
 	const dim3 threads(32, 8);
 	const dim3 grid(divUp(result.cols, threads.x), divUp(result.rows, threads.y));
 
-	matchTemplateNaiveKernel_SQDIFF<T, cn> << <grid, threads, 0, stream >> >(templ.cols, templ.rows, image, templ, result);
+	matchTemplateNaiveKernel_SQDIFF<T, cn> << <grid, threads >> >(templ.cols, templ.rows, image, templ, result, mask);
 	cudaSafeCall(cudaGetLastError());
 
-	if (stream == 0)
-		cudaSafeCall(cudaDeviceSynchronize());
+	cudaSafeCall(cudaDeviceSynchronize());
 }
 
-void matchTemplateNaive_SQDIFF_32F(const PtrStepSzb image, const PtrStepSzb templ, PtrStepSzf result, int cn, cudaStream_t stream){
-	typedef void(*caller_t)(const PtrStepSzb image, const PtrStepSzb templ, PtrStepSzf result, cudaStream_t stream);
+void matchTemplateNaive_SQDIFF_32F(const PtrStepSzb image, const PtrStepSzb templ, PtrStepSzf result, int cn, PtrStepSzf mask){
+	typedef void(*caller_t)(const PtrStepSzb image, const PtrStepSzb templ, PtrStepSzf result, PtrStepSzf mask);
 
 	static const caller_t callers[] = {
 		0, matchTemplateNaive_SQDIFF<float, 1>, matchTemplateNaive_SQDIFF<float, 2>, matchTemplateNaive_SQDIFF<float, 3>, matchTemplateNaive_SQDIFF<float, 4>
 	};
 
-	callers[cn](image, templ, result, stream);
+	callers[cn](image, templ, result, mask);
 }
 
-void matchTemplate_SQDIFF_32F(const GpuMat& image, const GpuMat& templ, GpuMat& result, Stream& stream){
+void matchTemplate_SQDIFF_32F(const GpuMat& image, const GpuMat& templ, GpuMat& result, GpuMat& mask){
 	result.create(image.rows - templ.rows + 1, image.cols - templ.cols + 1, CV_32F);
-	matchTemplateNaive_SQDIFF_32F(image, templ, result, image.channels(), StreamAccessor::getStream(stream));
+	matchTemplateNaive_SQDIFF_32F(image, templ, result, image.channels(), mask);
 }
 
 typedef struct tmpMatchDiff{
@@ -103,10 +104,12 @@ int main(int argc, char* argv[])
 	double scale = 0.2;
 	vector<matchDiff> allDiff;
 	img = imread("input.png", CV_LOAD_IMAGE_UNCHANGED);
+	outputImg = img.clone();
 
 	Mat templ;
 	Mat resizeImg, resizeTempl; // resize + rgba
 	Mat splitImg[4], splitTempl[4]; // resize + r,g,b,a
+	Mat oSplitTempl[4];
 	Mat rgbImg, rgbTempl; // resize + rgb
 	char *inputDir = "match", *outputDir = "result";
 	allDiff.clear();
@@ -116,27 +119,33 @@ int main(int argc, char* argv[])
 	merge(splitImg, 3, rgbImg);
 	rgbImg.convertTo(rgbImg, CV_32FC4, 1.0 / 255.0);
 	templ = imread("match.png", CV_LOAD_IMAGE_UNCHANGED);
+	split(templ, oSplitTempl);
 	resize(templ, resizeTempl, Size(templ.cols * scale, templ.rows * scale));
 	split(resizeTempl, splitTempl); // alpha channel is mask would be CV_8U
 	merge(splitTempl, 3, rgbTempl);
 	rgbTempl.convertTo(rgbTempl, CV_32FC4, 1.0 / 255.0);
+	splitTempl[3].convertTo(splitTempl[3], CV_32FC1, 1.0 / 255.0);
 
 	LARGE_INTEGER startTime, endTime, fre;
 	QueryPerformanceFrequency(&fre); // 取得CPU頻率
 	QueryPerformanceCounter(&startTime); // 取得開機到現在經過幾個CPU Cycle
 
-	GpuMat d_rgbImg(rgbImg), d_resultImg, d_rgbTempl(rgbTempl);
-	matchTemplate_SQDIFF_32F(d_rgbImg, d_rgbTempl, d_resultImg, Stream::Null());
+	GpuMat d_rgbImg(rgbImg), d_resultImg, d_rgbTempl(rgbTempl), d_mask(splitTempl[3]);
+	matchTemplate_SQDIFF_32F(d_rgbImg, d_rgbTempl, d_resultImg, d_mask);
 
 	Mat resultImg;
 	d_resultImg.download(resultImg);
-	normalize(resultImg, resultImg, 0, 1, NORM_MINMAX, -1, Mat());
+	//normalize(resultImg, resultImg, 0, 1, NORM_MINMAX, -1, Mat());
 
 	QueryPerformanceCounter(&endTime); //取得開機到程式執行完成經過幾個CPU Cycle
 	printf("Elapsed Time: %lf", ((double)endTime.QuadPart - (double)startTime.QuadPart) / fre.QuadPart);
 
+	double minVal; double maxVal; Point minLoc; Point maxLoc;
+	minMaxLoc(resultImg, &minVal, &maxVal, &minLoc, &maxLoc, Mat());
+	templ.copyTo(outputImg(Rect(minLoc.x / scale, minLoc.y / scale, templ.cols, templ.rows)), oSplitTempl[3]);
+
 	namedWindow("output", CV_WINDOW_AUTOSIZE);
-	imshow("output", resultImg);
+	imshow("output", outputImg);
 	imwrite("outputImg.png", resultImg);
 	waitKey(0);
 
