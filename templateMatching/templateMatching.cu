@@ -110,9 +110,10 @@ void runTemplateMatching(Mat img, vector<matchDiff> &allDiff, double scale){
 	allDiff.clear();
 
 	resize(img, resizeImg, Size(img.cols * scale, img.rows * scale));
+	resizeImg.convertTo(resizeImg, CV_32FC4, 1.0 / 255.0);
 	split(resizeImg, splitImg);
 	merge(splitImg, 3, rgbImg);
-	rgbImg.convertTo(rgbImg, CV_32FC4, 1.0 / 255.0);
+	cvtColor(rgbImg, rgbImg, CV_RGB2HSV);
 	GpuMat d_rgbImg(rgbImg);
 
 	char systemStr[100];
@@ -128,11 +129,12 @@ void runTemplateMatching(Mat img, vector<matchDiff> &allDiff, double scale){
 
 		templ = imread(fileWithDir, CV_LOAD_IMAGE_UNCHANGED);
 
-		for (double s = 0.1; s <= scale ; s += 0.05){
+		for (double s = 0.08; s <= scale ; s += 0.04){
 			resize(templ, resizeTempl, Size(templ.cols * s, templ.rows * s));
 			resizeTempl.convertTo(resizeTempl, CV_32FC4, 1.0 / 255.0);
 			split(resizeTempl, splitTempl);
 			merge(splitTempl, 3, rgbTempl);
+			cvtColor(rgbTempl, rgbTempl, CV_RGB2HSV);
 
 			GpuMat d_resultImg, d_rgbTempl(rgbTempl), d_mask(splitTempl[3]);
 			matchTemplate_SQDIFF_32F(d_rgbImg, d_rgbTempl, d_resultImg, d_mask);
@@ -170,7 +172,7 @@ void outputDiff(vector<matchDiff> &allDiff, char *filename){
 
 void outputByObj(Mat img, Mat &outputImg, double scale, vector<matchDiff> &allDiff){
 	img.copyTo(outputImg);
-	map<string, int>fileNameHash;
+	/*map<string, int>fileNameHash;
 
 	vector<matchDiff> outputMatch; outputMatch.clear();
 	for(int i = 0; i < allDiff.size() - 1 && outputMatch.size() < 100; ++ i){
@@ -188,6 +190,14 @@ void outputByObj(Mat img, Mat &outputImg, double scale, vector<matchDiff> &allDi
 		resize(templ, templ, Size(templ.cols * outputMatch[i].scale, templ.rows * outputMatch[i].scale));
 		split(templ, mask);
 		templ.copyTo(outputImg(Rect(outputMatch[i].x, outputMatch[i].y, templ.cols, templ.rows)), mask[3]);
+	}*/
+
+	Mat templ, mask[4];
+	for (int i = 19999; i >= 0; --i){
+		templ = imread(allDiff[i].filename, CV_LOAD_IMAGE_UNCHANGED);
+		resize(templ, templ, Size(templ.cols * allDiff[i].scale, templ.rows * allDiff[i].scale));
+		split(templ, mask);
+		templ.copyTo(outputImg(Rect(allDiff[i].x, allDiff[i].y, templ.cols, templ.rows)), mask[3]);
 	}
 }
 
