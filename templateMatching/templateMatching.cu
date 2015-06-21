@@ -170,6 +170,13 @@ void outputDiff(vector<matchDiff> &allDiff, char *filename){
 	allDiff.clear();
 }
 
+bool checkout(Mat &check, int x, int y, int dis){
+	for (int i = x - dis; i <= x + dis; ++i)
+		for (int j = y - dis; j <= y + dis; ++j)
+		if (((uchar *)check.data)[j * check.cols + i])
+			return true;
+	return false;
+}
 void outputByObj(Mat img, Mat &outputImg, double scale, vector<matchDiff> &allDiff){
 	img.copyTo(outputImg);
 	/*map<string, int>fileNameHash;
@@ -193,7 +200,11 @@ void outputByObj(Mat img, Mat &outputImg, double scale, vector<matchDiff> &allDi
 	}*/
 
 	Mat templ, mask[4];
-	for (int i = 19999; i >= 0; --i){
+	Mat check(img.rows, img.cols, CV_8UC1);
+	for (int i = 49999; i >= 0; --i){
+		if (checkout(check, allDiff[i].x, allDiff[i].y, 100))
+			continue;
+		((uchar *)check.data)[(allDiff[i].y + 2) * check.cols + allDiff[i].x + 2] = 1;
 		templ = imread(allDiff[i].filename, CV_LOAD_IMAGE_UNCHANGED);
 		resize(templ, templ, Size(templ.cols * allDiff[i].scale, templ.rows * allDiff[i].scale));
 		split(templ, mask);
